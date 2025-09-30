@@ -27,19 +27,29 @@ export default function JogoOrbe() {
   const [gameState, setGameState] = useState<'start' | 'playing' | 'gameOver'>('start');
   const soundObject = useRef<Audio.Sound | null>(null);
 
-  // Carregar o som de coleta
+  // --- CORREÇÃO DE SOM (INÍCIO) ---
+  // Função para configurar o modo de áudio e carregar o som.
+  async function setupAudio() {
+    try {
+      // Configura o modo de áudio para permitir a reprodução no iOS em modo silencioso.
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: false,
+      });
+      
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../assets/sounds/collect.mp3')
+      );
+      soundObject.current = sound;
+    } catch (error) {
+      console.error("Não foi possível carregar e configurar o som", error);
+    }
+  }
+
   useEffect(() => {
-    const loadSound = async () => {
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../assets/sounds/collect.mp3')
-        );
-        soundObject.current = sound;
-      } catch (error) {
-        console.error("Não foi possível carregar o som", error);
-      }
-    };
-    loadSound();
+    setupAudio();
 
     return () => {
       if (soundObject.current) {
@@ -47,8 +57,8 @@ export default function JogoOrbe() {
       }
     };
   }, []);
+  // --- CORREÇÃO DE SOM (FIM) ---
 
-  // Efeito para o giroscópio
   useEffect(() => {
     if (gameState !== 'playing') return;
 
@@ -60,12 +70,17 @@ export default function JogoOrbe() {
     return () => subscription.remove();
   }, [gameState]);
 
-  // Efeito para a movimentação do jogador
   useEffect(() => {
     if (gameState !== 'playing') return;
 
-    let newX = playerPosition.x - data.y * 10;
-    let newY = playerPosition.y - data.x * 10;
+    // --- CORREÇÃO DO EIXO DO GIROSCÓPIO ---
+    // Invertemos os eixos para que o movimento seja mais natural:
+    // Inclinar para os lados (eixo Y do giroscópio) move o jogador no eixo X.
+    // Inclinar para frente/trás (eixo X do giroscópio) move o jogador no eixo Y.
+    // Usamos o sinal de SOMA (+) para que a direção do movimento corresponda à inclinação.
+    let newX = playerPosition.x + data.y * 10;
+    let newY = playerPosition.y + data.x * 10;
+
 
     if (newX < 0) newX = 0;
     if (newX > width - PLAYER_SIZE) newX = width - PLAYER_SIZE;
@@ -91,14 +106,17 @@ export default function JogoOrbe() {
     if (distance < (PLAYER_SIZE / 2) + (ORB_SIZE / 2)) {
       setScore(prevScore => prevScore + 1);
       setOrbPosition(generateRandomPosition());
+      
+      // --- CORREÇÃO DE SOM (REPRODUÇÃO) ---
+      // Garante que o som seja tocado do início a cada coleta.
       if (soundObject.current) {
         soundObject.current.replayAsync();
       }
-      // Dificuldade progressiva
-      setTimeLeft(prevTime => Math.max(prevTime - 0.5, 5)); // Reduz o tempo, com um mínimo de 5s
+      
+      setTimeLeft(prevTime => Math.max(prevTime - 0.5, 5));
     }
   }, [playerPosition, gameState]);
-
+  
   // Efeito para o timer
   useEffect(() => {
     if (gameState !== 'playing' || timeLeft <= 0) {
@@ -164,40 +182,40 @@ export default function JogoOrbe() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#2c3e50',
-  },
-  scoreText: {
-    position: 'absolute',
-    top: 40,
-    left: 20,
-    fontSize: 20,
-    color: '#fff',
-  },
-  timerText: {
-    position: 'absolute',
-    top: 40,
-    right: 20,
-    fontSize: 20,
-    color: '#fff',
-  },
-  player: {
-    position: 'absolute',
-    width: PLAYER_SIZE,
-    height: PLAYER_SIZE,
-    borderRadius: PLAYER_SIZE / 2,
-    backgroundColor: 'coral',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  orb: {
-    position: 'absolute',
-    width: ORB_SIZE,
-    height: ORB_SIZE,
-    borderRadius: ORB_SIZE / 2,
-    backgroundColor: '#3498db',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-});
+    container: {
+      flex: 1,
+      backgroundColor: '#2c3e50',
+    },
+    scoreText: {
+      position: 'absolute',
+      top: 40,
+      left: 20,
+      fontSize: 20,
+      color: '#fff',
+    },
+    timerText: {
+      position: 'absolute',
+      top: 40,
+      right: 20,
+      fontSize: 20,
+      color: '#fff',
+    },
+    player: {
+      position: 'absolute',
+      width: PLAYER_SIZE,
+      height: PLAYER_SIZE,
+      borderRadius: PLAYER_SIZE / 2,
+      backgroundColor: 'coral',
+      borderWidth: 2,
+      borderColor: '#fff',
+    },
+    orb: {
+      position: 'absolute',
+      width: ORB_SIZE,
+      height: ORB_SIZE,
+      borderRadius: ORB_SIZE / 2,
+      backgroundColor: '#3498db',
+      borderWidth: 2,
+      borderColor: '#fff',
+    },
+  });
