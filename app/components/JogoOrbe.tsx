@@ -1,19 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Dimensions, Text } from 'react-native';
 import { Gyroscope } from 'expo-sensors';
+import { Audio } from 'expo-av';
+import StartScreen from '../components/StartScreen';
+import GameOverScreen from '../components/GameOverScreen';
 
 const { width, height } = Dimensions.get('window');
 const PLAYER_SIZE = 50;
 const ORB_SIZE = 30;
+const INITIAL_TIME = 15; // Tempo inicial em segundos
 
-// A função que gera a posição do orbe.
 const generateRandomPosition = () => {
-  // --- CORREÇÃO 1: Orbes Fora da Tela ---
-  // O problema era que a posição aleatória ia de 0 até a largura/altura total da tela.
-  // Isso fazia com que o *ponto inicial* (canto superior esquerdo) do orbe pudesse ser
-  // sorteado no limite da tela, deixando o resto do seu corpo para fora.
-  // A SOLUÇÃO é subtrair o tamanho do orbe (ORB_SIZE) do limite máximo do sorteio.
-  // Assim, a posição máxima sorteada garante que o orbe caberá inteiramente na tela.
   const position = {
     x: Math.random() * (width - ORB_SIZE),
     y: Math.random() * (height - ORB_SIZE),
@@ -21,49 +18,67 @@ const generateRandomPosition = () => {
   return position;
 };
 
-export default function App() {
+export default function JogoOrbe() {
   const [data, setData] = useState({ x: 0, y: 0, z: 0 });
   const [playerPosition, setPlayerPosition] = useState({ x: width / 2, y: height / 2 });
   const [orbPosition, setOrbPosition] = useState(generateRandomPosition());
+  const [score, setScore] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(INITIAL_TIME);
+  const [gameState, setGameState] = useState<'start' | 'playing' | 'gameOver'>('start');
+  const soundObject = useRef<Audio.Sound | null>(null);
 
+  // Carregar o som de coleta
   useEffect(() => {
-    // --- CORREÇÃO 2: Movimento Travado ---
-    // O valor original de '500' era muito alto, significando que o sensor só enviava
-    // atualizações 2 vezes por segundo, causando o efeito "travado" ou "pulando".
-    // A SOLUÇÃO é usar um intervalo baixo, como '16' milissegundos, que equivale a
-    // aproximadamente 60 quadros por segundo (60fps), resultando em um movimento suave.
-    Gyroscope.setUpdateInterval(16);
+    const loadSound = async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../assets/sounds/collect.mp3')
+        );
+        soundObject.current = sound;
+      } catch (error) {
+        console.error("Não foi possível carregar o som", error);
+      }
+    };
+    loadSound();
 
+    return () => {
+      if (soundObject.current) {
+        soundObject.current.unloadAsync();
+      }
+    };
+  }, []);
+
+  // Efeito para o giroscópio
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+
+    Gyroscope.setUpdateInterval(16);
     const subscription = Gyroscope.addListener(gyroscopeData => {
       setData(gyroscopeData);
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [gameState]);
 
+  // Efeito para a movimentação do jogador
   useEffect(() => {
-    // --- CORREÇÃO 3: Controles Invertidos e Lentos ---
-    // 1. (INVERSÃO): Os operadores matemáticos estavam trocados. O eixo Y do giroscópio (inclinar
-    //    para os lados) deve controlar o eixo X da tela, e o sinal deve ser negativo para que
-    //    inclinar para a direita mova a bola para a direita. O mesmo se aplica ao eixo Y.
-    // 2. (LENTIDÃO): O multiplicador '3' era muito baixo, resultando em pouca sensibilidade.
-    // A SOLUÇÃO é inverter os operadores (+ para -, - para +) e aumentar o multiplicador
-    // para um valor como '10', tornando os controles mais responsivos.
-    let newX = playerPosition.x - data.y * 10; // Inclinar para os lados (eixo Y) move no eixo X
+    if (gameState !== 'playing') return;
 
-    let newY = playerPosition.y - data.x * 10; // Inclinar para frente/trás (eixo X) move no eixo Y
+    let newX = playerPosition.x - data.y * 10;
+    let newY = playerPosition.y - data.x * 10;
 
-    // Esta parte do código (limites da tela) já estava correta.
     if (newX < 0) newX = 0;
     if (newX > width - PLAYER_SIZE) newX = width - PLAYER_SIZE;
     if (newY < 0) newY = 0;
     if (newY > height - PLAYER_SIZE) newY = height - PLAYER_SIZE;
 
     setPlayerPosition({ x: newX, y: newY });
-  }, [data]);
+  }, [data, gameState]);
 
+  // Efeito para a colisão e placar
   useEffect(() => {
-    // Lógica para detectar colisão
+    if (gameState !== 'playing') return;
+
     const playerCenterX = playerPosition.x + PLAYER_SIZE / 2;
     const playerCenterY = playerPosition.y + PLAYER_SIZE / 2;
     const orbCenterX = orbPosition.x + ORB_SIZE / 2;
@@ -73,19 +88,57 @@ export default function App() {
     const dy = playerCenterY - orbCenterY;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    // --- CORREÇÃO 4: Coleta "Fantasma" ---
-    // O problema era que a condição de colisão comparava a distância com a SOMA DOS DIÂMETROS
-    // (PLAYER_SIZE + ORB_SIZE), o que criava uma área de detecção muito grande.
-    // A SOLUÇÃO correta para colisões circulares é comparar a distância entre os centros
-    // com a SOMA DOS RAIOS (Tamanho / 2).
     if (distance < (PLAYER_SIZE / 2) + (ORB_SIZE / 2)) {
+      setScore(prevScore => prevScore + 1);
       setOrbPosition(generateRandomPosition());
+      if (soundObject.current) {
+        soundObject.current.replayAsync();
+      }
+      // Dificuldade progressiva
+      setTimeLeft(prevTime => Math.max(prevTime - 0.5, 5)); // Reduz o tempo, com um mínimo de 5s
     }
-  }, [playerPosition]);
+  }, [playerPosition, gameState]);
+
+  // Efeito para o timer
+  useEffect(() => {
+    if (gameState !== 'playing' || timeLeft <= 0) {
+      if (timeLeft <= 0) {
+        setGameState('gameOver');
+      }
+      return;
+    }
+
+    const timerId = setInterval(() => {
+      setTimeLeft(prevTime => prevTime - 1);
+    }, 1000);
+
+    return () => clearInterval(timerId);
+  }, [gameState, timeLeft]);
+
+  const handleStartGame = () => {
+    setScore(0);
+    setTimeLeft(INITIAL_TIME);
+    setPlayerPosition({ x: width / 2, y: height / 2 });
+    setOrbPosition(generateRandomPosition());
+    setGameState('playing');
+  };
+
+  const handleRestartGame = () => {
+    handleStartGame();
+  };
+
+  if (gameState === 'start') {
+    return <StartScreen onStart={handleStartGame} />;
+  }
+
+  if (gameState === 'gameOver') {
+    return <GameOverScreen score={score} onRestart={handleRestartGame} />;
+  }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.instructions}>Colete o orbe azul!</Text>
+      <Text style={styles.scoreText}>Pontos: {score}</Text>
+      <Text style={styles.timerText}>Tempo: {timeLeft}</Text>
       
       <View
         style={[
@@ -110,18 +163,22 @@ export default function App() {
   );
 }
 
-// Os estilos não precisaram de alteração.
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#2c3e50',
   },
-  instructions: {
+  scoreText: {
     position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
-    textAlign: 'center',
+    top: 40,
+    left: 20,
+    fontSize: 20,
+    color: '#fff',
+  },
+  timerText: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
     fontSize: 20,
     color: '#fff',
   },
