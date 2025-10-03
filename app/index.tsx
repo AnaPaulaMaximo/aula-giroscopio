@@ -1,7 +1,7 @@
-import JogoOrbe from '@/app/components/JogoOrbe'
+import TesouroSubmarino from '@/app/components/TesouroSubmarino'
 
 export default function Index() {
   return (
-    <JogoOrbe/>
+    <TesouroSubmarino />
   );
 }
