@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Dimensions, Text, Image } from 'react-native';
+import { StyleSheet, View, Dimensions, Text, Image, Animated } from 'react-native';
 import { Accelerometer } from 'expo-sensors';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -7,17 +7,25 @@ import StartScreen from './StartScreen';
 import GameOverScreen from './GameOverScreen';
 
 const { width, height } = Dimensions.get('window');
-const DIVER_SIZE = 50;
-const COIN_SIZE = 30;
-const MINE_SIZE = 40;
-const OXYGEN_SIZE = 40;
+const DIVER_SIZE = 70;
+const COIN_SIZE = 40;
+const MINE_SIZE = 50;
+const OXYGEN_SIZE = 50;
 const INITIAL_OXYGEN = 30;
 
-const SCROLL_SPEED = 1.5;
+const SCROLL_SPEED = 2;
+
+// --- EFEITO DE BOLHAS ---
+const BUBBLE_COUNT = 20;
+
+const Bubble = ({ style }) => {
+  return <Animated.View style={[styles.bubble, style]} />;
+};
+
 
 const generateRandomPosition = (size: number) => ({
   x: Math.random() * (width - size),
-  y: height + Math.random() * height, 
+  y: height + Math.random() * height,
   id: Math.random(),
 });
 
@@ -33,6 +41,32 @@ export default function TesouroSubmarino() {
   const [gameState, setGameState] = useState<'start' | 'playing' | 'gameOver'>('start');
   const collectSound = useRef<Audio.Sound | null>(null);
   const explosionSound = useRef<Audio.Sound | null>(null);
+  const diverTilt = useRef(new Animated.Value(0)).current;
+
+  // --- EFEITO DE BOLHAS ---
+  const bubbles = useRef(
+    [...Array(BUBBLE_COUNT)].map(() => ({
+      x: Math.random() * width,
+      y: new Animated.Value(height + 50),
+      speed: 1 + Math.random() * 2,
+      size: 10 + Math.random() * 20,
+    }))
+  ).current;
+
+  // Função de animação corrigida com Animated.loop
+  function animateBubbles() {
+    bubbles.forEach(bubble => {
+      bubble.y.setValue(height + Math.random() * 50);
+      Animated.loop(
+        Animated.timing(bubble.y, {
+          toValue: -50,
+          duration: (10000 + Math.random() * 5000) / bubble.speed,
+          useNativeDriver: true,
+        })
+      ).start();
+    });
+  }
+
 
   async function setupAudio() {
     try {
@@ -48,11 +82,14 @@ export default function TesouroSubmarino() {
 
   useEffect(() => {
     setupAudio();
+    if (gameState === 'playing') {
+      animateBubbles();
+    }
     return () => {
       collectSound.current?.unloadAsync();
       explosionSound.current?.unloadAsync();
     };
-  }, []);
+  }, [gameState]);
 
   useEffect(() => {
     if (gameState !== 'playing') {
@@ -73,9 +110,9 @@ export default function TesouroSubmarino() {
   useEffect(() => {
     if (gameState !== 'playing' || !neutralTilt) return;
 
-    const sensitivity = 40; // Alta sensibilidade para detectar pequenas inclinações
-    const maxSpeed = 4;     // Baixa velocidade máxima para manter o controle
-    const deadZone = 0.03;  // Pequena zona morta para estabilidade
+    const sensitivity = 40;
+    const maxSpeed = 6;
+    const deadZone = 0.03;
 
     const deltaY = accelerometerData.y - neutralTilt.y;
     const deltaX = accelerometerData.x - neutralTilt.x;
@@ -96,9 +133,16 @@ export default function TesouroSubmarino() {
     if (velocityY > maxSpeed) velocityY = maxSpeed;
     if (velocityY < -maxSpeed) velocityY = -maxSpeed;
 
+    Animated.spring(diverTilt, {
+        toValue: deltaY * -20,
+        friction: 5,
+        useNativeDriver: true,
+      }).start();
+
+
     let newX = diverPosition.x + velocityX;
     let newY = diverPosition.y + velocityY;
-    
+
     // Limites da tela
     if (newX < 0) newX = 0;
     if (newX > width - DIVER_SIZE) newX = width - DIVER_SIZE;
@@ -129,7 +173,7 @@ export default function TesouroSubmarino() {
     }, 16);
     return () => clearInterval(gameLoop);
   }, [gameState]);
-  
+
   // Colisões
   useEffect(() => {
     if (gameState !== 'playing') return;
@@ -165,26 +209,29 @@ export default function TesouroSubmarino() {
         const dy = diverCenterY - tankCenterY;
         const distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < (DIVER_SIZE / 2) + (OXYGEN_SIZE / 2)) {
-          setOxygen(prev => prev + 10);
+          setOxygen(prev => Math.min(prev + 10, INITIAL_OXYGEN));
           setOxygenTanks(prev => prev.filter(t => t.id !== tank.id));
           collectSound.current?.replayAsync();
         }
       });
   }, [diverPosition, gameState, coins, mines, oxygenTanks]);
-  
-  // Timer de Oxigênio
+
+  // Timer de Oxigênio corrigido
   useEffect(() => {
-    if (gameState !== 'playing' || oxygen <= 0) {
-      if (oxygen <= 0) {
-        setGameState('gameOver');
-      }
+    if (gameState !== 'playing') {
       return;
     }
     const timerId = setInterval(() => {
-      setOxygen(prev => prev - 1);
+      setOxygen(prev => {
+        if (prev <= 1) {
+          setGameState('gameOver');
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(timerId);
-  }, [gameState, oxygen]);
+  }, [gameState]);
 
   const handleStartGame = () => {
     setScore(0);
@@ -205,19 +252,47 @@ export default function TesouroSubmarino() {
   }
 
   return (
-    <LinearGradient colors={['#3B9CFF', '#003366']} style={styles.container}>
-      <Text style={styles.hudText}>Pontos: {score}</Text>
-      <Text style={[styles.hudText, { left: 150 }]}>Oxigênio: {oxygen}</Text>
+    <LinearGradient colors={['#005f9ea8', '#001a35c4']} style={styles.container}>
+     {bubbles.map((bubble, index) => (
+       <Bubble
+         key={index}
+         style={{
+           left: bubble.x,
+           transform: [{ translateY: bubble.y }],
+           width: bubble.size,
+           height: bubble.size,
+         }}
+       />
+     ))}
+      <View style={styles.hud}>
+        <Text style={styles.hudText}>Pontos: {score}</Text>
+        <View style={styles.oxygenContainer}>
+          <Text style={styles.hudText}>Oxigênio: </Text>
+          <View style={styles.oxygenBar}>
+            <View style={{ width: `${(oxygen / INITIAL_OXYGEN) * 100}%`, ...styles.oxygenFill }} />
+          </View>
+        </View>
+      </View>
       {coins.map(coin => (
-        <Image key={coin.id} source={require('../../assets/images/coin.png')} style={[styles.item, { width: COIN_SIZE, height: COIN_SIZE, left: coin.x, top: coin.y }]} />
+        <Image key={coin.id} source={require('../../assets/images/coin.png')} style={[styles.item, styles.coin, { width: COIN_SIZE, height: COIN_SIZE, left: coin.x, top: coin.y }]} />
       ))}
       {mines.map(mine => (
         <Image key={mine.id} source={require('../../assets/images/mine.png')} style={[styles.item, { width: MINE_SIZE, height: MINE_SIZE, left: mine.x, top: mine.y }]} />
       ))}
       {oxygenTanks.map(tank => (
-        <Image key={tank.id} source={require('../../assets/images/oxygen.png')} style={[styles.item, { width: OXYGEN_SIZE, height: OXYGEN_SIZE, left: tank.x, top: tank.y }]} />
+        <Image key={tank.id} source={require('../../assets/images/oxygen.png')} style={[styles.item, styles.oxygen, { width: OXYGEN_SIZE, height: OXYGEN_SIZE, left: tank.x, top: tank.y }]} />
       ))}
-      <Image source={require('../../assets/images/diver.png')} style={[styles.diver, { left: diverPosition.x, top: diverPosition.y }]} />
+      <Animated.Image
+        source={require('../../assets/images/diver.png')}
+        style={[
+          styles.diver,
+          {
+            left: diverPosition.x,
+            top: diverPosition.y,
+            transform: [{ rotateZ: diverTilt.interpolate({ inputRange: [-20, 20], outputRange: ['-20deg', '20deg'], extrapolate: 'clamp' }) }],
+          },
+        ]}
+      />
     </LinearGradient>
   );
 }
@@ -227,17 +302,43 @@ const styles = StyleSheet.create({
       flex: 1,
       overflow: 'hidden',
     },
+    hud: {
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        right: 20,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        zIndex: 10,
+        backgroundColor: 'rgba(0,0,0,0.2)',
+        padding: 10,
+        borderRadius: 10,
+      },
     hudText: {
-      position: 'absolute',
-      top: 20,
-      left: 20,
       fontSize: 20,
       color: '#fff',
       textShadowColor: 'rgba(0, 0, 0, 0.75)',
       textShadowOffset: { width: -1, height: 1 },
       textShadowRadius: 10,
-      zIndex: 10,
     },
+    oxygenContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+      },
+      oxygenBar: {
+        height: 20,
+        width: 100,
+        backgroundColor: 'rgba(255,255,255,0.3)',
+        borderRadius: 10,
+        marginLeft: 10,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.5)',
+      },
+      oxygenFill: {
+        height: '100%',
+        backgroundColor: '#3B9CFF',
+      },
     diver: {
       position: 'absolute',
       width: DIVER_SIZE,
@@ -246,14 +347,28 @@ const styles = StyleSheet.create({
     },
     item: {
       position: 'absolute',
+      shadowColor: '#fff',
+      shadowOffset: {
+        width: 0,
+        height: 0,
+      },
+      shadowOpacity: 0.8,
+      shadowRadius: 15,
+      elevation: 10,
     },
     coin: {
-        position: 'absolute',
+        // animação de brilho
     },
     mine: {
-        position: 'absolute',
+        // animação de perigo
     },
     oxygen: {
+        // animação de bolhas
+    },
+    bubble: {
         position: 'absolute',
-    }
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 100,
+        // Y é controlado pelo Animated.Value
+      },
   });
