@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, View, Dimensions, Text, Image, Animated } from 'react-native';
 import { Accelerometer } from 'expo-sensors';
 import { Audio } from 'expo-av';
@@ -91,20 +91,22 @@ export default function TesouroSubmarino() {
     };
   }, [gameState]);
 
+  const handleAccelerometerData = useCallback((data) => {
+    if (!neutralTilt) {
+      setNeutralTilt({ x: data.x, y: data.y });
+    }
+    setAccelerometerData(data);
+  }, [neutralTilt]);
+
   useEffect(() => {
     if (gameState !== 'playing') {
       Accelerometer.removeAllListeners();
       return;
     }
     Accelerometer.setUpdateInterval(16);
-    const subscription = Accelerometer.addListener(data => {
-      if (!neutralTilt) {
-        setNeutralTilt({ x: data.x, y: data.y });
-      }
-      setAccelerometerData(data);
-    });
+    const subscription = Accelerometer.addListener(handleAccelerometerData);
     return () => subscription.remove();
-  }, [gameState, neutralTilt]);
+  }, [gameState, handleAccelerometerData]);
 
   // EFEITO DE MOVIMENTO REFINADO: DETECÇÃO SENSÍVEL COM VELOCIDADE LENTA
   useEffect(() => {
