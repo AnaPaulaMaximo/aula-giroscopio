@@ -13,12 +13,10 @@ const MINE_SIZE = 40;
 const OXYGEN_SIZE = 40;
 const INITIAL_OXYGEN = 30;
 
-// Velocidade com que o cenário "sobe"
 const SCROLL_SPEED = 1.5;
 
 const generateRandomPosition = (size: number) => ({
   x: Math.random() * (width - size),
-  // Nasce um pouco abaixo da tela
   y: height + Math.random() * height, 
   id: Math.random(),
 });
@@ -71,48 +69,68 @@ export default function TesouroSubmarino() {
     return () => subscription.remove();
   }, [gameState, neutralTilt]);
 
-  // Game Loop Principal para movimento de cenário e itens
-  useEffect(() => {
-    if (gameState !== 'playing') return;
-
-    const gameLoop = setInterval(() => {
-      // Move todos os itens para cima
-      setCoins(prev => prev.map(c => ({ ...c, y: c.y - SCROLL_SPEED })).filter(c => c.y > -COIN_SIZE));
-      setMines(prev => prev.map(m => ({ ...m, y: m.y - SCROLL_SPEED })).filter(m => m.y > -MINE_SIZE));
-      setOxygenTanks(prev => prev.map(t => ({ ...t, y: t.y - SCROLL_SPEED })).filter(t => t.y > -OXYGEN_SIZE));
-
-      // Gera novos itens aleatoriamente
-      if (Math.random() < 0.02) { // Chance de gerar moeda
-        setCoins(prev => [...prev, generateRandomPosition(COIN_SIZE)]);
-      }
-      if (Math.random() < 0.01) { // Chance de gerar mina
-        setMines(prev => [...prev, generateRandomPosition(MINE_SIZE)]);
-      }
-      if (Math.random() < 0.005) { // Chance de gerar oxigênio
-        setOxygenTanks(prev => [...prev, generateRandomPosition(OXYGEN_SIZE)]);
-      }
-    }, 16); // Roda a ~60fps
-
-    return () => clearInterval(gameLoop);
-  }, [gameState]);
-
-
+  // EFEITO DE MOVIMENTO REFINADO: DETECÇÃO SENSÍVEL COM VELOCIDADE LENTA
   useEffect(() => {
     if (gameState !== 'playing' || !neutralTilt) return;
-    const sensitivity = 18;
+
+    const sensitivity = 40; // Alta sensibilidade para detectar pequenas inclinações
+    const maxSpeed = 4;     // Baixa velocidade máxima para manter o controle
+    const deadZone = 0.03;  // Pequena zona morta para estabilidade
+
     const deltaY = accelerometerData.y - neutralTilt.y;
     const deltaX = accelerometerData.x - neutralTilt.x;
 
-    let newX = diverPosition.x + deltaY * sensitivity;
-    let newY = diverPosition.y - deltaX * sensitivity;
+    let velocityX = 0;
+    if (Math.abs(deltaY) > deadZone) {
+      velocityX = deltaY * sensitivity;
+    }
 
+    let velocityY = 0;
+    if (Math.abs(deltaX) > deadZone) {
+      velocityY = -deltaX * sensitivity; // Invertido para coordenadas da tela
+    }
+
+    // Limita a velocidade máxima
+    if (velocityX > maxSpeed) velocityX = maxSpeed;
+    if (velocityX < -maxSpeed) velocityX = -maxSpeed;
+    if (velocityY > maxSpeed) velocityY = maxSpeed;
+    if (velocityY < -maxSpeed) velocityY = -maxSpeed;
+
+    let newX = diverPosition.x + velocityX;
+    let newY = diverPosition.y + velocityY;
+    
+    // Limites da tela
     if (newX < 0) newX = 0;
     if (newX > width - DIVER_SIZE) newX = width - DIVER_SIZE;
     if (newY < 0) newY = 0;
     if (newY > height - DIVER_SIZE) newY = height - DIVER_SIZE;
+
     setDiverPosition({ x: newX, y: newY });
   }, [accelerometerData, gameState, neutralTilt]);
 
+
+  // Game Loop Principal
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    const gameLoop = setInterval(() => {
+      setCoins(prev => prev.map(c => ({ ...c, y: c.y - SCROLL_SPEED })).filter(c => c.y > -COIN_SIZE));
+      setMines(prev => prev.map(m => ({ ...m, y: m.y - SCROLL_SPEED })).filter(m => m.y > -MINE_SIZE));
+      setOxygenTanks(prev => prev.map(t => ({ ...t, y: t.y - SCROLL_SPEED })).filter(t => t.y > -OXYGEN_SIZE));
+
+      if (Math.random() < 0.02) {
+        setCoins(prev => [...prev, generateRandomPosition(COIN_SIZE)]);
+      }
+      if (Math.random() < 0.01) {
+        setMines(prev => [...prev, generateRandomPosition(MINE_SIZE)]);
+      }
+      if (Math.random() < 0.005) {
+        setOxygenTanks(prev => [...prev, generateRandomPosition(OXYGEN_SIZE)]);
+      }
+    }, 16);
+    return () => clearInterval(gameLoop);
+  }, [gameState]);
+  
+  // Colisões
   useEffect(() => {
     if (gameState !== 'playing') return;
     const diverCenterX = diverPosition.x + DIVER_SIZE / 2;
@@ -154,6 +172,7 @@ export default function TesouroSubmarino() {
       });
   }, [diverPosition, gameState, coins, mines, oxygenTanks]);
   
+  // Timer de Oxigênio
   useEffect(() => {
     if (gameState !== 'playing' || oxygen <= 0) {
       if (oxygen <= 0) {
@@ -171,7 +190,6 @@ export default function TesouroSubmarino() {
     setScore(0);
     setOxygen(INITIAL_OXYGEN);
     setDiverPosition({ x: width / 2, y: height / 2 });
-    // Inicia com alguns itens já na tela
     setCoins(Array.from({ length: 5 }, () => ({ ...generateRandomPosition(COIN_SIZE), y: Math.random() * height })));
     setMines(Array.from({ length: 2 }, () => ({ ...generateRandomPosition(MINE_SIZE), y: Math.random() * height })));
     setOxygenTanks([]);
@@ -207,7 +225,7 @@ export default function TesouroSubmarino() {
 const styles = StyleSheet.create({
     container: {
       flex: 1,
-      overflow: 'hidden', // Esconde os itens fora da tela
+      overflow: 'hidden',
     },
     hudText: {
       position: 'absolute',
@@ -218,13 +236,13 @@ const styles = StyleSheet.create({
       textShadowColor: 'rgba(0, 0, 0, 0.75)',
       textShadowOffset: { width: -1, height: 1 },
       textShadowRadius: 10,
-      zIndex: 10, // Garante que o placar fique por cima de tudo
+      zIndex: 10,
     },
     diver: {
       position: 'absolute',
       width: DIVER_SIZE,
       height: DIVER_SIZE,
-      zIndex: 5, // Mergulhador fica na frente dos itens
+      zIndex: 5,
     },
     item: {
       position: 'absolute',
