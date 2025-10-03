@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Dimensions, Text, Image } from 'react-native';
-import { Gyroscope } from 'expo-sensors';
+import { Accelerometer } from 'expo-sensors';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import StartScreen from './StartScreen';
@@ -21,7 +21,8 @@ const generateRandomPosition = (size: number) => ({
 });
 
 export default function TesouroSubmarino() {
-  const [gyroData, setGyroData] = useState({ x: 0, y: 0, z: 0 });
+  const [accelerometerData, setAccelerometerData] = useState({ x: 0, y: 0, z: 0 });
+  const [neutralTilt, setNeutralTilt] = useState<{ x: number; y: number } | null>(null); // Estado para a posição neutra
   const [diverPosition, setDiverPosition] = useState({ x: width / 2, y: height / 2 });
   const [coins, setCoins] = useState(Array.from({ length: INITIAL_COINS }, () => ({ ...generateRandomPosition(COIN_SIZE), id: Math.random() })));
   const [mines, setMines] = useState(Array.from({ length: INITIAL_MINES }, () => ({ ...generateRandomPosition(MINE_SIZE), id: Math.random() })));
@@ -36,18 +37,13 @@ export default function TesouroSubmarino() {
     try {
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
-        allowsRecordingIOS: false,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: false,
       });
-
       const { sound: collect } = await Audio.Sound.createAsync(require('../../assets/sounds/collect.mp3'));
       collectSound.current = collect;
-
       const { sound: explosion } = await Audio.Sound.createAsync(require('../../assets/sounds/explosion.mp3'));
       explosionSound.current = explosion;
     } catch (error) {
-      console.error("Não foi possível carregar e configurar o som", error);
+      console.error("Não foi possível carregar o som", error);
     }
   }
 
@@ -60,23 +56,35 @@ export default function TesouroSubmarino() {
   }, []);
 
   useEffect(() => {
-    if (gameState !== 'playing') return;
-    Gyroscope.setUpdateInterval(16); // ~60fps
-    const subscription = Gyroscope.addListener(setGyroData);
+    if (gameState !== 'playing') {
+      Accelerometer.removeAllListeners();
+      return;
+    }
+
+    Accelerometer.setUpdateInterval(16);
+    const subscription = Accelerometer.addListener(data => {
+      // Calibra na primeira leitura de dados após o início do jogo
+      if (!neutralTilt) {
+        setNeutralTilt({ x: data.x, y: data.y });
+      }
+      setAccelerometerData(data);
+    });
+
     return () => subscription.remove();
-  }, [gameState]);
+  }, [gameState, neutralTilt]);
 
-  // EFEITO DE MOVIMENTO CORRIGIDO E SUAVIZADO
+  // EFEITO DE MOVIMENTO CORRIGIDO E CALIBRADO
   useEffect(() => {
-    if (gameState !== 'playing') return;
+    if (gameState !== 'playing' || !neutralTilt) return;
 
-    const sensitivity = 12; // Sensibilidade equilibrada
-    const smoothingFactor = 0.8; // Fator de suavização para evitar tremores
+    const sensitivity = 18; // Sensibilidade reduzida para movimento mais lento
+    
+    // Calcula a diferença entre a inclinação atual e a posição neutra
+    const deltaY = accelerometerData.y - neutralTilt.y;
+    const deltaX = accelerometerData.x - neutralTilt.x;
 
-    // Interpola a posição atual com a nova posição para um movimento suave
-    let newX = diverPosition.x * smoothingFactor + (diverPosition.x + gyroData.y * sensitivity) * (1 - smoothingFactor);
-    let newY = diverPosition.y * smoothingFactor + (diverPosition.y - gyroData.x * sensitivity) * (1 - smoothingFactor);
-
+    let newX = diverPosition.x + deltaY * sensitivity;
+    let newY = diverPosition.y - deltaX * sensitivity;
 
     // Limites da tela
     if (newX < 0) newX = 0;
@@ -85,9 +93,9 @@ export default function TesouroSubmarino() {
     if (newY > height - DIVER_SIZE) newY = height - DIVER_SIZE;
 
     setDiverPosition({ x: newX, y: newY });
-  }, [gyroData, gameState, diverPosition.x, diverPosition.y]); // Adicionei x e y para re-executar a cada frame
+  }, [accelerometerData, gameState, neutralTilt]);
 
-
+  // ... (Restante do código de colisões e timers permanece o mesmo)
   useEffect(() => {
     if (gameState !== 'playing') return;
 
@@ -166,6 +174,7 @@ export default function TesouroSubmarino() {
     return () => clearInterval(timerId);
   }, [gameState, oxygen]);
 
+
   const handleStartGame = () => {
     setScore(0);
     setOxygen(INITIAL_OXYGEN);
@@ -173,6 +182,7 @@ export default function TesouroSubmarino() {
     setCoins(Array.from({ length: INITIAL_COINS }, () => ({ ...generateRandomPosition(COIN_SIZE), id: Math.random() })));
     setMines(Array.from({ length: INITIAL_MINES }, () => ({ ...generateRandomPosition(MINE_SIZE), id: Math.random() })));
     setOxygenTanks(Array.from({ length: 1 }, () => ({ ...generateRandomPosition(OXYGEN_SIZE), id: Math.random() })));
+    setNeutralTilt(null); // Reseta a calibração para o próximo jogo
     setGameState('playing');
   };
 
